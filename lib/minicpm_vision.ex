@@ -130,11 +130,22 @@ defmodule MinicpmVision.Service do
 
   @doc """
   Analyze image content using MiniCPM.
-  Returns analysis response map.
+  Accepts single image (%ImageInput{}) or list of images ([%ImageInput{}]).
+  Returns single analysis response map or list of maps accordingly.
   """
-  @spec analyze_image(%ImageInput{}, String.t()) :: {:ok, map()} | {:error, String.t()}
-  def analyze_image(%ImageInput{content: binary_image}, question) do
-    GenServer.call(@name, {:analyze_image, binary_image, question}, 30_000)
+  @spec analyze_image(%ImageInput{} | [%ImageInput{}], String.t()) :: {:ok, map() | [map()]} | {:error, String.t()}
+  def analyze_image(image_input, question) do
+    case image_input do
+      %ImageInput{} ->
+        # Single image
+        GenServer.call(@name, {:analyze_single_image, image_input.content, question}, 30_000)
+      [%ImageInput{} | _] = images ->
+        # Multiple images - longer timeout needed for processing multiple images
+        image_binaries = Enum.map(images, & &1.content)
+        GenServer.call(@name, {:analyze_multiple_images, image_binaries, question}, 120_000)
+      _ ->
+        {:error, "Input must be %ImageInput{} or [%ImageInput{}]"}
+    end
   end
 
   @doc """
@@ -178,6 +189,23 @@ defmodule MinicpmVision.Service do
   end
 
   @impl true
+  def handle_call({:analyze_single_image, binary_image, question}, _from, state) do
+    case run_analysis(binary_image, question, state) do
+      {:ok, result, updated_state} -> {:reply, {:ok, result}, updated_state}
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
+
+  @impl true
+  def handle_call({:analyze_multiple_images, image_binaries, question}, _from, state) do
+    case run_multiple_analysis(image_binaries, question, state) do
+      {:ok, results, updated_state} -> {:reply, {:ok, results}, updated_state}
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
+
+  # Legacy support - redirect to new single image handler
+  @impl true
   def handle_call({:analyze_image, binary_image, question}, _from, state) do
     case run_analysis(binary_image, question, state) do
       {:ok, result, updated_state} -> {:reply, {:ok, result}, updated_state}
@@ -212,6 +240,39 @@ defmodule MinicpmVision.Service do
   end
 
   # Private functions
+
+  defp run_multiple_analysis(image_binaries, question, state) do
+    try do
+      Logger.debug("Running multiple image analysis with MiniCPM")
+
+      # Use EEx template for dynamic Python code generation with multiple images
+      python_code = EEx.eval_file("lib/templates/multiple_image_analysis.eex", [])
+      encoded_image_binaries = Enum.map(image_binaries, &Pythonx.encode!/1)
+      encoded_question = Pythonx.encode!(question)
+      python_globals = state.python_globals
+      python_globals = Map.put(python_globals, "question", encoded_question)
+      python_globals = Map.put(python_globals, "image_bytes_list", encoded_image_binaries)
+      {result_string, updated_globals} = Pythonx.eval(python_code, python_globals)
+
+      description = Pythonx.decode(result_string)
+
+      analysis_response = %{
+        "description" => description,
+        "num_images" => length(image_binaries),
+        "success" => true,
+        "raw_response" => description,
+        "analyzed_at" => DateTime.utc_now()
+      }
+
+      Logger.info("Multiple image analysis completed successfully")
+      {:ok, analysis_response, Map.put(state, :python_globals, updated_globals)}
+
+    rescue
+      e ->
+        Logger.error("Multiple Image Analysis failed: #{inspect(e)}")
+        {:error, "Multiple Image Analysis error: #{inspect(e)}"}
+    end
+  end
 
   defp run_video_analysis(binary_video, question, fps, force_packing, state) do
     try do

@@ -1,0 +1,16 @@
+import base64
+import io
+from PIL import Image
+
+# Process multiple images
+images = []
+for i, img_bytes in enumerate(image_bytes_list):
+    img = Image.open(io.BytesIO(img_bytes)).convert('RGB')
+    images.append(img)
+
+# Create message structure for multiple images
+msgs = [{'role': 'user', 'content': images + [question]}]
+
+# Model and tokenizer are already loaded globally - call and return result
+message = model.chat(msgs=msgs, image=images, tokenizer=tokenizer)
+message

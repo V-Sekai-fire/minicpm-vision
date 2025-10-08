@@ -5,7 +5,12 @@ defmodule MinicpmVision.ServiceTest do
   alias MinicpmVision.Service
   alias MinicpmVision.Service.{ImageInput, SimpleDescription, LanguageAnalysis}
 
-  @airplane_image_path "tests/media/airplane.jpeg"
+  @color_image_paths [
+    "tests/media/image1.png",
+    "tests/media/image2.png",
+    "tests/media/image3.png",
+    "tests/media/image4.png"
+  ]
 
   describe "ImageInput schema" do
     test "struct has expected fields" do
@@ -42,41 +47,52 @@ defmodule MinicpmVision.ServiceTest do
     end
   end
 
-  describe "image analysis" do
+  describe "multiple image analysis" do
     @tag integration: true
-    @tag timeout: 60_000
-    test "analyze airplane image" do
+    @tag timeout: 180_000
+    test "analyze multiple color images" do
       # Start the service if not already running
       unless Process.whereis(Service) do
         {:ok, _pid} = Service.start_link([])
       end
 
-      # Load and analyze the airplane image
-      case Service.create_image_input(@airplane_image_path) do
-        {:ok, image_input} ->
-          question = "Describe what you see in this image"
+      # Load all color images
+      loaded_images = Enum.reduce_while(@color_image_paths, [], fn path, acc ->
+        case Service.create_image_input(path) do
+          {:ok, image_input} -> {:cont, acc ++ [image_input]}
+          {:error, reason} -> {:halt, {:error, "Failed to load #{path}: #{reason}"}}
+        end
+      end)
 
-          case Service.analyze_image(image_input, question) do
-            {:ok, result} ->
-              Logger.debug("Image analysis result: #{inspect(result)}")
-
-              # Check that the response contains airplane-related keywords
-              description = String.downcase(result["description"])
-
-              # The model should recognize this is an airplane image
-              # Common keywords that might appear in the analysis
-              airplane_keywords = ["airplane", "plane", "aircraft", "jet", "wings", "propeller"]
-
-              assert Enum.any?(airplane_keywords,
-                fn keyword -> String.contains?(description, keyword) end),
-                "Description should contain airplane-related keywords. Got: #{description}"
-
-            {:error, reason} ->
-              flunk("Image analysis failed: #{reason}")
-          end
-
+      case loaded_images do
         {:error, reason} ->
-          flunk("Could not create image input: #{reason}")
+          flunk(reason)
+
+        _ when is_list(loaded_images) ->
+          question = "What are the colors in these images?"
+
+            case Service.analyze_image(loaded_images, question) do
+              {:ok, result} ->
+                Logger.debug("Multiple image analysis result: #{inspect(result)}")
+
+                # Check that the response contains color information for multiple images
+                description = String.downcase(result["description"])
+
+                # Count how many different color names appear in the response
+                color_words = ["red", "blue", "green", "yellow", "orange", "purple", "pink", "brown", "black", "white", "gray"]
+                detected_colors = Enum.filter(color_words, fn color -> String.contains?(description, color) end)
+
+                # The model should have identified multiple different colors from the 4 distinct images
+                assert length(detected_colors) >= 3,
+                  "Should detect at least 3 different colors in response. Detected: #{inspect(detected_colors)}. Full response: #{result["description"]}"
+
+                # Check that we have the correct number of images in the result
+                assert result["num_images"] == 4,
+                  "Should report analyzing 4 images"
+
+              {:error, reason} ->
+                flunk("Multiple image analysis failed: #{reason}")
+            end
       end
     end
   end
