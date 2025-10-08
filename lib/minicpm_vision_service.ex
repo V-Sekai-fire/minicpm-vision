@@ -9,6 +9,7 @@ defmodule MiniCPMVisionService do
 
   use GenServer
   require Logger
+  require EEx
 
   @name __MODULE__
 
@@ -175,7 +176,7 @@ defmodule MiniCPMVisionService do
   @impl true
   def handle_call({:analyze_image, base64_image, question}, _from, state) do
     case run_analysis(base64_image, question, state) do
-      {:ok, result} -> {:reply, {:ok, result}, state}
+      {:ok, result, updated_state} -> {:reply, {:ok, result}, updated_state}
       {:error, reason} -> {:reply, {:error, reason}, state}
     end
   end
@@ -183,14 +184,6 @@ defmodule MiniCPMVisionService do
   @impl true
   def handle_call({:analyze_simple, base64_image, prompt}, _from, state) do
     case run_simple_analysis(base64_image, prompt, state) do
-      {:ok, result} -> {:reply, {:ok, result}, state}
-      {:error, reason} -> {:reply, {:error, reason}, state}
-    end
-  end
-
-  @impl true
-  def handle_call({:analyze_language, text, prompt}, _from, state) do
-    case run_language_analysis(text, prompt, state) do
       {:ok, result} -> {:reply, {:ok, result}, state}
       {:error, reason} -> {:reply, {:error, reason}, state}
     end
@@ -216,36 +209,38 @@ defmodule MiniCPMVisionService do
 
   # Private functions
 
+
+
   defp initialize_model do
     try do
       Logger.info("Initializing pythonx and loading MiniCPM model...")
 
-      # Test pythonx basic functionality
-      {test_result, _} = Pythonx.eval("print('pythonx ready')", %{})
-      Logger.info("Pythonx initialized: #{inspect(test_result)}")
+      # Single consolidated Python initialization script using EEx template
+      python_script = EEx.eval_file("lib/templates/initialization.eex", [])
+      {result, python_globals} = Pythonx.eval(python_script, %{})
 
-      # Load MiniCPM model (this is expensive, done once)
-      Logger.info("Loading MiniCPM model (this may take a minute)...")
+      # Verify initialization succeeded (decode from Pythonx.Object to string)
+      result_string = Pythonx.decode(result)
 
-      model_load_result = model_initialization_code()
+      case result_string do
+        "initialization_complete" ->
+          Logger.info("MiniCPM Vision Service initialized successfully with Python globals")
 
-      case model_load_result do
-        {result, _globals} ->
-          # Check if result indicates success
-          result_str = to_string(result)
-          if String.contains?(String.downcase(result_str), "loaded") or String.contains?(result_str, "GPU") do
-            Logger.info("MiniCPM model loaded successfully")
+          state = %{
+            model_loaded_at: DateTime.utc_now(),
+            start_time: :os.system_time(:millisecond),
+            device: "cuda",
+            model_path: "huihui-ai/Huihui-MiniCPM-V-4_5-abliterated",
+            python_globals: python_globals
+          }
 
-            state = %{
-              model_loaded_at: DateTime.utc_now(),
-              start_time: :os.system_time(:millisecond),
-              device: "cuda",
-              model_path: "huihui-ai/Huihui-MiniCPM-V-4_5-abliterated"
-            }
+          {:ok, state}
 
-            {:ok, state}
-          end
+        _ ->
+          Logger.error("Unexpected initialization result: #{inspect(result_string)}")
+          {:error, "Model initialization failed"}
       end
+
     rescue
       e ->
         Logger.error("Failed to initialize model: #{inspect(e)}")
@@ -253,65 +248,47 @@ defmodule MiniCPMVisionService do
     end
   end
 
-  defp run_analysis(base64_image, question, _state) do
+  defp run_analysis(base64_image, question, state) do
     try do
       Logger.debug("Running image analysis with MiniCPM")
 
-      analysis_code = """
-import base64
-from PIL import Image
-import io
-
-# Decode base64 image in fresh python environment
-image_bytes = base64.b64decode('#{String.replace(base64_image, "'", "\\'")}')
-image = Image.open(io.BytesIO(image_bytes)).convert('RGB')
-
-# Ask the loaded model directly
-question = '#{String.replace(question, "'", "\\'")}'
-msgs = [{'role': 'user', 'content': [image, question]}]
-
-# Note: In persistent scope, model/tokenizer would be available from model_initialization_code
-# For now, we reload in the same eval (trade-off between complexity and performance)
-import torch
-from transformers import AutoModel, AutoTokenizer
-
-model_path = 'huihui-ai/Huihui-MiniCPM-V-4_5-abliterated'
-model = AutoModel.from_pretrained(model_path, trust_remote_code=True, attn_implementation='sdpa', torch_dtype=torch.bfloat16)
-model = model.eval().cuda()
-tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
-
-answer = model.chat(msgs=msgs, image=image, tokenizer=tokenizer)
-str(answer)
-"""
-
-      {result, _globals} = Pythonx.eval(analysis_code, %{})
+      # Use EEx template for dynamic Python code generation
+      python_code = EEx.eval_file("lib/templates/image_analysis.eex", [])
+      encoded_base64_image = Pythonx.encode!(base64_image)
+      encoded_question = Pythonx.encode!(question)
+      python_globals = state.python_globals
+      python_globals = Map.put(python_globals, "question", encoded_question)
+      python_globals = Map.put(python_globals, "base64_image", encoded_base64_image)
+      {result_string, updated_globals} = Pythonx.eval(python_code, python_globals)
+      
+      description = Pythonx.decode(result_string)
 
       analysis_response = %{
-        "description" => to_string(result),
+        "description" => description,
         "objects" => [],
         "colors" => [],
         "success" => true,
-        "raw_response" => to_string(result),
+        "raw_response" => description,
         "analyzed_at" => DateTime.utc_now()
       }
 
       Logger.info("Image analysis completed successfully")
-      {:ok, analysis_response}
+      {:ok, analysis_response, Map.put(state, :python_globals, updated_globals)}
 
     rescue
       e ->
-        Logger.error("Analysis failed: #{inspect(e)}")
-        {:error, "Analysis error: #{inspect(e)}"}
+        Logger.error("Image Analysis failed: #{inspect(e)}")
+        {:error, "Image Analysis error: #{inspect(e)}"}
     end
   end
 
-  defp run_simple_analysis(base64_image, prompt, _state) do
+  defp run_simple_analysis(base64_image, prompt, state) do
     try do
       Logger.debug("Running simple structured analysis")
 
       # Get the raw MiniCPM response first
-      case run_analysis(base64_image, prompt, %{}) do
-        {:ok, basic_result} ->
+      case run_analysis(base64_image, prompt, state) do
+        {:ok, basic_result, _updated_state} ->
           raw_response = basic_result["raw_response"]
 
           # Use Instructor with SimpleDescription schema
@@ -345,81 +322,5 @@ str(answer)
         Logger.error("Simple analysis failed: #{inspect(e)}")
         {:error, "Simple analysis error: #{inspect(e)}"}
     end
-  end
-
-  defp run_language_analysis(text, prompt, _state) do
-    try do
-      Logger.debug("Running language analysis")
-
-      # Use MiniCPM for text analysis (text-only, no image)
-      analysis_code = """
-# Use MiniCPM for text analysis
-question = '#{String.replace(prompt, "'", "\\'")}'
-text_content = '#{String.replace(text, "'", "\\'")}'
-msgs = [{'role': 'user', 'content': text_content + '\\n\\n' + question}]
-
-# Load model for text analysis
-import torch
-from transformers import AutoModel, AutoTokenizer
-
-model_path = 'huihui-ai/Huihui-MiniCPM-V-4_5-abliterated'
-model = AutoModel.from_pretrained(model_path, trust_remote_code=True, attn_implementation='sdpa', torch_dtype=torch.bfloat16)
-model = model.eval().cuda()
-tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
-
-answer = model.chat(msgs=msgs, tokenizer=tokenizer)
-str(answer)
-"""
-
-      {result, _globals} = Pythonx.eval(analysis_code, %{})
-
-      raw_response = to_string(result)
-
-      # Use Instructor with LanguageAnalysis schema
-      case Instructor.chat_completion(%{
-        messages: [
-          %{
-            role: "system",
-            content: "Parse this text analysis into summary, key insights, interpretation, and context notes."
-          },
-          %{
-            role: "user",
-            content: raw_response
-          }
-        ]
-      }, response_model: LanguageAnalysis, max_retries: 1) do
-        {:ok, structured_result} ->
-          Logger.info("Language analysis complete")
-          {:ok, structured_result}
-
-        {:error, parse_error} ->
-          Logger.warning("Language analysis parsing failed: #{inspect(parse_error)}")
-          {:error, "Failed to parse language response: #{inspect(parse_error)}"}
-      end
-
-    rescue
-      e ->
-        Logger.error("Language analysis failed: #{inspect(e)}")
-        {:error, "Language analysis error: #{inspect(e)}"}
-    end
-  end
-
-  defp model_initialization_code do
-    """
-import torch
-from PIL import Image
-from transformers import AutoModel, AutoTokenizer
-import base64
-import io
-
-# Initialize MiniCPM exactly as in the docs
-model_path = 'huihui-ai/Huihui-MiniCPM-V-4_5-abliterated'
-model = AutoModel.from_pretrained(model_path, trust_remote_code=True, attn_implementation='sdpa', torch_dtype=torch.bfloat16)
-model = model.eval().cuda()
-tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
-
-'MiniCPM model loaded on GPU'
-"""
-    |> Pythonx.eval(%{})
   end
 end

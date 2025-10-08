@@ -1,0 +1,14 @@
+import base64
+import io
+import traceback
+from PIL import Image
+
+image_bytes = base64.b64decode(base64_image)
+image = Image.open(io.BytesIO(image_bytes)).convert('RGB')
+
+# Create message structure matching working Python
+msgs = [{'role': 'user', 'content': [image, question]}]
+
+# Model and tokenizer are already loaded globally - call and return result
+message = model.chat(msgs=msgs, image=image, tokenizer=tokenizer)
+message

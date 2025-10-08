@@ -1,0 +1,11 @@
+[project]
+name = "minicpm-vision-service-test"
+version = "0.1.0"
+description = "Test Python environment for MiniCPM Vision Service"
+requires-python = ">=3.9"
+dependencies = [
+    "torch>=2.0.0",
+    "torchvision>=0.15.0",
+    "transformers>=4.30.0",
+    "pillow>=9.0.0",
+]

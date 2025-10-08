@@ -1,0 +1,32 @@
+print('pythonx ready')
+
+# CRITICAL: Check GPU availability before loading expensive model
+import torch
+cuda_available = torch.cuda.is_available()
+if cuda_available:
+    device_count = torch.cuda.device_count()
+    device_name = torch.cuda.get_device_name(0) if device_count > 0 else "Unknown"
+    gpu_info = f"CUDA available: {device_count} device(s), primary: {device_name}"
+    print(gpu_info)
+else:
+    gpu_error = "CUDA not available - GPU required for MiniCPM Vision Service"
+    print(gpu_error)
+    raise RuntimeError(gpu_error)
+
+# Load MiniCPM model (expensive operation)
+print('Loading MiniCPM model (this may take a minute)...')
+
+import torch
+import torchvision  # Ensure torchvision is available for MiniCPM
+from PIL import Image
+from transformers import AutoModel, AutoTokenizer
+import base64
+import io
+
+# Initialize MiniCPM exactly as in the docs
+model_path = 'huihui-ai/Huihui-MiniCPM-V-4_5-abliterated'
+model = AutoModel.from_pretrained(model_path, trust_remote_code=True, attn_implementation='sdpa', torch_dtype=torch.bfloat16)
+model = model.eval().cuda()
+tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
+
+'initialization_complete'

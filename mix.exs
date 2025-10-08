@@ -20,6 +20,7 @@ defmodule MinicpmVisionService.MixProject do
   defp deps do
     [
       {:instructor, "~> 0.1.0"},
+      {:ecto_sql, "~> 3.10"},
       {:jaxon, "~> 2.0"},
       {:pythonx, "~> 0.4.7"},
     ]
