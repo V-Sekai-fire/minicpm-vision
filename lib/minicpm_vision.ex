@@ -1,4 +1,4 @@
-defmodule MiniCPMVisionService do
+defmodule MinicpmVision.Service do
   @moduledoc """
   MiniCPM Vision Service - Multi-modal analysis using MiniCPM.
 
@@ -126,6 +126,15 @@ defmodule MiniCPMVisionService do
       {:error, reason} ->
         {:error, "Could not read image file: #{reason}"}
     end
+  end
+
+  @doc """
+  Analyze image content using MiniCPM.
+  Returns analysis response map.
+  """
+  @spec analyze_image(%ImageInput{}, String.t()) :: {:ok, map()} | {:error, String.t()}
+  def analyze_image(%ImageInput{content: binary_image}, question) do
+    GenServer.call(@name, {:analyze_image, binary_image, question}, 30_000)
   end
 
   @doc """
@@ -289,7 +298,7 @@ defmodule MiniCPMVisionService do
       python_globals = Map.put(python_globals, "question", encoded_question)
       python_globals = Map.put(python_globals, "image_bytes", encoded_binary_image)
       {result_string, updated_globals} = Pythonx.eval(python_code, python_globals)
-      
+
       description = Pythonx.decode(result_string)
 
       analysis_response = %{
@@ -307,7 +316,7 @@ defmodule MiniCPMVisionService do
     rescue
       e ->
         Logger.error("Image Analysis failed: #{inspect(e)}")
-        {:error, "Image Analysis error: #{inspect(e)}"}
+        {:error, "Image Analysis error"}
     end
   end
 end

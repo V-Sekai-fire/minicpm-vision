@@ -1,4 +1,4 @@
-defmodule MinicpmVisionService.Application do
+defmodule MinicpmVision.Application do
   # See https://hexdocs.pm/elixir/Application.html
   # for more information on OTP Applications
   @moduledoc false
@@ -13,12 +13,12 @@ defmodule MinicpmVisionService.Application do
 
     children = [
       # Starts the MiniCPM Vision Server
-      MiniCPMSupervisor
+      MinicpmVision.Supervisor
     ]
 
     # See https://hexdocs.pm/elixir/Supervisor.html
     # for other strategies and supported options
-    opts = [strategy: :one_for_one, name: MinicpmVisionService.Supervisor]
+    opts = [strategy: :one_for_one, name: MinicpmVision.Supervisor]
     Supervisor.start_link(children, opts)
   end
 

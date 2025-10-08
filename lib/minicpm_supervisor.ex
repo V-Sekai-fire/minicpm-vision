@@ -1,4 +1,4 @@
-defmodule MiniCPMSupervisor do
+defmodule MinicpmVision.Supervisor do
   @moduledoc """
   Supervisor for MiniCPM Vision Server.
   Manages the lifecycle of the MiniCPM service.
@@ -13,7 +13,7 @@ defmodule MiniCPMSupervisor do
   @impl true
   def init(_init_arg) do
     children = [
-      {MiniCPMVisionService, []}
+      {MinicpmVision.Service, []}
     ]
 
     Supervisor.init(children, strategy: :one_for_one, name: __MODULE__)

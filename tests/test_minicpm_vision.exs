@@ -1,8 +1,9 @@
-defmodule MiniCPMVisionServiceTest do
+defmodule MinicpmVision.ServiceTest do
   use ExUnit.Case
+  require Logger
 
-  alias MiniCPMVisionService
-  alias MiniCPMVisionService.{ImageInput, SimpleDescription, LanguageAnalysis}
+  alias MinicpmVision.Service
+  alias MinicpmVision.Service.{ImageInput, SimpleDescription, LanguageAnalysis}
 
   @airplane_image_path "tests/media/airplane.jpeg"
 
@@ -41,12 +42,51 @@ defmodule MiniCPMVisionServiceTest do
     end
   end
 
+  describe "image analysis" do
+    @tag integration: true
+    @tag timeout: 60_000
+    test "analyze airplane image" do
+      # Start the service if not already running
+      unless Process.whereis(Service) do
+        {:ok, _pid} = Service.start_link([])
+      end
+
+      # Load and analyze the airplane image
+      case Service.create_image_input(@airplane_image_path) do
+        {:ok, image_input} ->
+          question = "Describe what you see in this image"
+
+          case Service.analyze_image(image_input, question) do
+            {:ok, result} ->
+              Logger.debug("Image analysis result: #{inspect(result)}")
+
+              # Check that the response contains airplane-related keywords
+              description = String.downcase(result["description"])
+
+              # The model should recognize this is an airplane image
+              # Common keywords that might appear in the analysis
+              airplane_keywords = ["airplane", "plane", "aircraft", "jet", "wings", "propeller"]
+
+              assert Enum.any?(airplane_keywords,
+                fn keyword -> String.contains?(description, keyword) end),
+                "Description should contain airplane-related keywords. Got: #{description}"
+
+            {:error, reason} ->
+              flunk("Image analysis failed: #{reason}")
+          end
+
+        {:error, reason} ->
+          flunk("Could not create image input: #{reason}")
+      end
+    end
+  end
+
   describe "low-level API" do
     test "responds to GenServer calls" do
       # Test that the service is registered (may not be running in test context)
-      pid = Process.whereis(MiniCPMVisionService)
+      pid = Process.whereis(Service)
       if pid do
-        status = MiniCPMVisionService.status()
+        status = Service.status()
         assert is_map(status)
         assert Map.has_key?(status, :server)
       else
@@ -60,11 +100,11 @@ defmodule MiniCPMVisionServiceTest do
     @tag integration: true, timeout: 1_200_000  # 20 minutes for model loading/download
     test "service can be started and stopped" do
       # Only run if service isn't already started
-      unless Process.whereis(MiniCPMVisionService) do
-        case MiniCPMVisionService.start_link([]) do
+      unless Process.whereis(Service) do
+        case Service.start_link([]) do
           {:ok, pid} ->
             assert Process.alive?(pid)
-            status = MiniCPMVisionService.status()
+            status = Service.status()
             assert status.server == :running
 
           {:error, {:already_started, _pid}} ->
