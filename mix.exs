@@ -13,13 +13,12 @@ defmodule MinicpmVision.MixProject do
 
   def application do
     [
-      extra_applications: [:logger, :instructor]
+      extra_applications: [:logger]
     ]
   end
 
   defp deps do
     [
-      {:instructor, "~> 0.1.0"},
       {:ecto_sql, "~> 3.10"},
       {:jaxon, "~> 2.0"},
       {:pythonx, "~> 0.4.7"},

@@ -16,7 +16,6 @@ defmodule MinicpmVision.Service do
   # Input Schema - Define what we send to the vision service
   defmodule ImageInput do
     use Ecto.Schema
-    use Instructor
 
     @primary_key false
     embedded_schema do
@@ -50,7 +49,6 @@ defmodule MinicpmVision.Service do
   # Output Schemas - Define structured results from vision service
   defmodule SimpleDescription do
     use Ecto.Schema
-    use Instructor
 
     @primary_key false
     embedded_schema do
@@ -69,7 +67,6 @@ defmodule MinicpmVision.Service do
 
   defmodule LanguageAnalysis do
     use Ecto.Schema
-    use Instructor
 
     @primary_key false
     embedded_schema do
@@ -150,9 +147,9 @@ defmodule MinicpmVision.Service do
 
   @doc """
   Analyze text content with language interpretation.
-  Returns LanguageAnalysis struct.
+  Returns analysis as any free-form content.
   """
-  @spec analyze_language(String.t()) :: {:ok, %LanguageAnalysis{}} | {:error, String.t()}
+  @spec analyze_language(String.t()) :: {:ok, any()} | {:error, String.t()}
   def analyze_language(text) do
     prompt = "Analyze this text content: provide a summary, key insights, interpretation, and context notes."
     GenServer.call(@name, {:analyze_language, text, prompt}, 30_000)
