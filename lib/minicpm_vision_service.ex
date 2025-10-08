@@ -91,9 +91,9 @@ defmodule MiniCPMVisionService do
   Analyze an image with Base64 data and question.
   Returns basic map response.
   """
-  @spec analyze_image(String.t(), String.t()) :: {:ok, map()} | {:error, String.t()}
-  def analyze_image(base64_image, question) do
-    GenServer.call(@name, {:analyze_image, base64_image, question}, 30_000)
+  @spec analyze_image(term(), String.t()) :: {:ok, map()} | {:error, String.t()}
+  def analyze_image(binary_image, question) do
+    GenServer.call(@name, {:analyze_image, binary_image, question}, 30_000)
   end
 
   @doc """
@@ -124,37 +124,6 @@ defmodule MiniCPMVisionService do
     GenServer.call(@name, :status)
   end
 
-  @doc """
-  Create an ImageInput struct from file path.
-  """
-  @spec create_image_input(String.t()) :: {:ok, %ImageInput{}} | {:error, String.t()}
-  def create_image_input(image_path) do
-    case File.read(image_path) do
-      {:ok, binary} ->
-        base64_content = Base.encode64(binary)
-
-        filename = Path.basename(image_path)
-        format = Path.extname(image_path) |> String.trim_leading(".") |> String.downcase()
-
-        metadata = %{
-          file_size: byte_size(binary),
-          filename: filename
-        }
-
-        image_input = %ImageInput{
-          content: base64_content,
-          format: format,
-          filename: filename,
-          metadata: metadata
-        }
-
-        {:ok, image_input}
-
-      {:error, reason} ->
-        {:error, "Could not read image file: #{reason}"}
-    end
-  end
-
   # Server Callbacks
 
   @impl true
@@ -174,17 +143,9 @@ defmodule MiniCPMVisionService do
   end
 
   @impl true
-  def handle_call({:analyze_image, base64_image, question}, _from, state) do
-    case run_analysis(base64_image, question, state) do
+  def handle_call({:analyze_image, binary_image, question}, _from, state) do
+    case run_analysis(binary_image, question, state) do
       {:ok, result, updated_state} -> {:reply, {:ok, result}, updated_state}
-      {:error, reason} -> {:reply, {:error, reason}, state}
-    end
-  end
-
-  @impl true
-  def handle_call({:analyze_simple, base64_image, prompt}, _from, state) do
-    case run_simple_analysis(base64_image, prompt, state) do
-      {:ok, result} -> {:reply, {:ok, result}, state}
       {:error, reason} -> {:reply, {:error, reason}, state}
     end
   end
@@ -248,17 +209,17 @@ defmodule MiniCPMVisionService do
     end
   end
 
-  defp run_analysis(base64_image, question, state) do
+  defp run_analysis(binary_image, question, state) do
     try do
       Logger.debug("Running image analysis with MiniCPM")
 
       # Use EEx template for dynamic Python code generation
       python_code = EEx.eval_file("lib/templates/image_analysis.eex", [])
-      encoded_base64_image = Pythonx.encode!(base64_image)
+      encoded_binary_image = Pythonx.encode!(binary_image)
       encoded_question = Pythonx.encode!(question)
       python_globals = state.python_globals
       python_globals = Map.put(python_globals, "question", encoded_question)
-      python_globals = Map.put(python_globals, "base64_image", encoded_base64_image)
+      python_globals = Map.put(python_globals, "image_bytes", encoded_binary_image)
       {result_string, updated_globals} = Pythonx.eval(python_code, python_globals)
       
       description = Pythonx.decode(result_string)
@@ -279,48 +240,6 @@ defmodule MiniCPMVisionService do
       e ->
         Logger.error("Image Analysis failed: #{inspect(e)}")
         {:error, "Image Analysis error: #{inspect(e)}"}
-    end
-  end
-
-  defp run_simple_analysis(base64_image, prompt, state) do
-    try do
-      Logger.debug("Running simple structured analysis")
-
-      # Get the raw MiniCPM response first
-      case run_analysis(base64_image, prompt, state) do
-        {:ok, basic_result, _updated_state} ->
-          raw_response = basic_result["raw_response"]
-
-          # Use Instructor with SimpleDescription schema
-          case Instructor.chat_completion(%{
-            messages: [
-              %{
-                role: "system",
-                content: "Parse this vision analysis into a simple description with what you see, main colors, and overall feeling."
-              },
-              %{
-                role: "user",
-                content: raw_response
-              }
-            ]
-          }, response_model: SimpleDescription, max_retries: 1) do
-            {:ok, structured_result} ->
-              Logger.info("Simple structured analysis complete")
-              {:ok, structured_result}
-
-            {:error, parse_error} ->
-              Logger.warning("Simple analysis parsing failed: #{inspect(parse_error)}")
-              {:error, "Failed to parse response: #{inspect(parse_error)}"}
-          end
-
-        error ->
-          error
-      end
-
-    rescue
-      e ->
-        Logger.error("Simple analysis failed: #{inspect(e)}")
-        {:error, "Simple analysis error: #{inspect(e)}"}
     end
   end
 end

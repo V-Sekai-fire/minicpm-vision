@@ -6,22 +6,6 @@ defmodule MiniCPMVisionServiceTest do
 
   @airplane_image_path "tests/media/airplane.jpeg"
 
-  describe "create_image_input/1" do
-    test "creates ImageInput struct from JPEG file" do
-      assert {:ok, %ImageInput{} = input} = MiniCPMVisionService.create_image_input(@airplane_image_path)
-
-      assert input.filename == "airplane.jpeg"
-      assert input.format == "jpeg"
-      assert is_binary(input.content)
-      assert is_map(input.metadata)
-      assert input.metadata.filename == "airplane.jpeg"
-    end
-
-    test "fails with non-existent file" do
-      assert {:error, _reason} = MiniCPMVisionService.create_image_input("non_existent.jpg")
-    end
-  end
-
   describe "ImageInput schema" do
     test "struct has expected fields" do
       input = %ImageInput{
@@ -102,17 +86,6 @@ defmodule MiniCPMVisionServiceTest do
       assert String.contains?(toml_content, "torch")
       assert String.contains?(toml_content, "transformers")
       assert String.contains?(toml_content, "PILLOW")
-    end
-
-    test "vision service metadata is valid" do
-      # Test that content reading returns valid metadata for test images
-      {:ok, input} = MiniCPMVisionService.create_image_input(@airplane_image_path)
-      metadata = input.metadata
-
-      assert Map.has_key?(metadata, :file_size)
-      assert Map.has_key?(metadata, :filename)
-      assert metadata.file_size > 0
-      assert is_binary(metadata.filename)
     end
 
     test "gpu requirement is enforced without cuda" do
