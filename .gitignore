@@ -1,0 +1,17 @@
+unsloth_compiled_cache/
+.art/
+.venv/
+__pycache__
+.coverage
+
+# Elixir
+_build/
+cover/
+*.ez
+elixir_ls/
+mix.lock
+.cache
+deps/certifi/.hex
+deps/
+_build/
+deps/

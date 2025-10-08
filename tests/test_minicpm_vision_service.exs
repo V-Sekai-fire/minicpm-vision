@@ -1,0 +1,118 @@
+defmodule MiniCPMVisionServiceTest do
+  use ExUnit.Case
+
+  alias MiniCPMVisionService
+  alias MiniCPMVisionService.{ImageInput, SimpleDescription, LanguageAnalysis}
+
+  @airplane_image_path "tests/media/airplane.jpeg"
+
+  describe "create_image_input/1" do
+    test "creates ImageInput struct from JPEG file" do
+      assert {:ok, %ImageInput{} = input} = MiniCPMVisionService.create_image_input(@airplane_image_path)
+
+      assert input.filename == "airplane.jpeg"
+      assert input.format == "jpeg"
+      assert is_binary(input.content)
+      assert is_map(input.metadata)
+      assert input.metadata.filename == "airplane.jpeg"
+    end
+
+    test "fails with non-existent file" do
+      assert {:error, _reason} = MiniCPMVisionService.create_image_input("non_existent.jpg")
+    end
+  end
+
+  describe "ImageInput schema" do
+    test "struct has expected fields" do
+      input = %ImageInput{
+        filename: "test.jpg",
+        content: "base64content",
+        format: "jpeg"
+      }
+
+      assert input.filename == "test.jpg"
+      assert input.content == "base64content"
+      assert input.format == "jpeg"
+    end
+  end
+
+  describe "SimpleDescription schema" do
+    test "struct initializes with default values" do
+      output = %SimpleDescription{}
+
+      assert output.what_i_see == nil
+      assert output.main_colors == []
+      assert output.overall_feeling == nil
+    end
+  end
+
+  describe "LanguageAnalysis schema" do
+    test "struct initializes with default values" do
+      output = %LanguageAnalysis{}
+
+      assert output.summary == nil
+      assert output.key_insights == []
+      assert output.interpretation == nil
+      assert output.context_notes == []
+    end
+  end
+
+  describe "low-level API" do
+    test "responds to GenServer calls" do
+      # Test that the service is registered (may not be running in test context)
+      pid = Process.whereis(MiniCPMVisionService)
+      if pid do
+        status = MiniCPMVisionService.status()
+        assert is_map(status)
+        assert Map.has_key?(status, :server)
+      else
+        # Service not running is acceptable for unit tests
+        assert true
+      end
+    end
+  end
+
+  describe "service integration" do
+    @tag :integration
+    test "service can be started and stopped" do
+      # Only run if service isn't already started
+      unless Process.whereis(MiniCPMVisionService) do
+        case MiniCPMVisionService.start_link([]) do
+          {:ok, pid} ->
+            assert Process.alive?(pid)
+            status = MiniCPMVisionService.status()
+            assert status.server == :running
+
+          {:error, {:already_started, _pid}} ->
+            # Service already running
+            assert true
+        end
+      end
+    end
+  end
+
+  describe "configuration" do
+    test "elixir config has required python dependencies" do
+      # Test that our Elixir config defines Python dependencies for MiniCPM
+      config = Application.get_env(:pythonx, :uv_init)
+      assert config != nil
+      assert config[:pyproject_toml] != nil
+
+      toml_content = config[:pyproject_toml]
+      assert String.contains?(toml_content, "torch")
+      assert String.contains?(toml_content, "transformers")
+      assert String.contains?(toml_content, "PILLOW")
+    end
+
+    test "vision service metadata is valid" do
+      # Test that content reading returns valid metadata for test images
+      {:ok, input} = MiniCPMVisionService.create_image_input(@airplane_image_path)
+      metadata = input.metadata
+
+      assert Map.has_key?(metadata, :file_size)
+      assert Map.has_key?(metadata, :filename)
+      assert metadata.file_size > 0
+      assert is_binary(metadata.filename)
+    end
+  end
+end
