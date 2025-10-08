@@ -20,7 +20,7 @@ defmodule MiniCPMVisionService do
 
     @primary_key false
     embedded_schema do
-      field(:content, :string)        # Base64 encoded image
+      field(:content, :binary)        # Raw image bytes
       field(:format, :string, default: "jpeg")     # Image format (jpeg, png, etc.)
       field(:filename, :string)       # Original filename
       field(:metadata, :map, default: %{})        # Size, dimensions, etc.
@@ -28,11 +28,23 @@ defmodule MiniCPMVisionService do
 
     @llm_doc """
     Image input for vision analysis containing:
-    - content: Base64 encoded image data
+    - content: Raw image bytes
     - format: Image format (jpeg, png, webp, gif)
     - filename: Original source filename
     - metadata: Image properties (width, height, file_size)
     """
+  end
+
+  defmodule VideoInput do
+    use Ecto.Schema
+
+    @primary_key false
+    embedded_schema do
+      field(:content, :binary)        # Raw video bytes
+      field(:format, :string, default: "mp4")     # Video format (mp4, avi, etc.)
+      field(:filename, :string)       # Original filename
+      field(:metadata, :map, default: %{})        # Duration, fps, file_size, etc.
+    end
   end
 
   # Output Schemas - Define structured results from vision service
@@ -88,22 +100,32 @@ defmodule MiniCPMVisionService do
   end
 
   @doc """
-  Analyze an image with Base64 data and question.
-  Returns basic map response.
+  Create an ImageInput struct from file path.
   """
-  @spec analyze_image(term(), String.t()) :: {:ok, map()} | {:error, String.t()}
-  def analyze_image(binary_image, question) do
-    GenServer.call(@name, {:analyze_image, binary_image, question}, 30_000)
-  end
+  @spec create_image_input(String.t()) :: {:ok, %ImageInput{}} | {:error, String.t()}
+  def create_image_input(image_path) do
+    case File.read(image_path) do
+      {:ok, binary} ->
+        filename = Path.basename(image_path)
+        format = Path.extname(image_path) |> String.trim_leading(".") |> String.downcase()
 
-  @doc """
-  Analyze an image with structured SimpleDescription output.
-  Returns SimpleDescription struct.
-  """
-  @spec analyze_simple(String.t()) :: {:ok, %SimpleDescription{}} | {:error, String.t()}
-  def analyze_simple(base64_image) do
-    prompt = "Describe this image simply: what you see, main colors, and overall feeling."
-    GenServer.call(@name, {:analyze_simple, base64_image, prompt}, 30_000)
+        metadata = %{
+          file_size: byte_size(binary),
+          filename: filename
+        }
+
+        image_input = %ImageInput{
+          content: binary,
+          format: format,
+          filename: filename,
+          metadata: metadata
+        }
+
+        {:ok, image_input}
+
+      {:error, reason} ->
+        {:error, "Could not read image file: #{reason}"}
+    end
   end
 
   @doc """
@@ -114,6 +136,10 @@ defmodule MiniCPMVisionService do
   def analyze_language(text) do
     prompt = "Analyze this text content: provide a summary, key insights, interpretation, and context notes."
     GenServer.call(@name, {:analyze_language, text, prompt}, 30_000)
+  end
+
+  def analyze_video(binary_video, question, fps, force_packing) do
+    GenServer.call(@name, {:analyze_video, binary_video, question, fps, force_packing}, 30_000)
   end
 
   @doc """
@@ -151,6 +177,14 @@ defmodule MiniCPMVisionService do
   end
 
   @impl true
+  def handle_call({:analyze_video, binary_video, question, fps, force_packing}, _from, state) do
+    case run_video_analysis(binary_video, question, fps, force_packing, state) do
+      {:ok, result, updated_state} -> {:reply, {:ok, result}, updated_state}
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
+
+  @impl true
   def handle_call(:status, _from, state) do
     status = %{
       server: :running,
@@ -170,7 +204,41 @@ defmodule MiniCPMVisionService do
 
   # Private functions
 
+  defp run_video_analysis(binary_video, question, fps, force_packing, state) do
+    try do
+      Logger.debug("Running video analysis with MiniCPM")
 
+      # Use EEx template for dynamic Python code generation
+      python_code = EEx.eval_file("lib/templates/video_analysis.eex", [])
+      encoded_binary_video = Pythonx.encode!(binary_video)
+      encoded_question = Pythonx.encode!(question)
+      encoded_fps = Pythonx.encode!(fps)
+      encoded_force_packing = Pythonx.encode!(force_packing)
+      python_globals = state.python_globals
+      python_globals = Map.put(python_globals, "question", encoded_question)
+      python_globals = Map.put(python_globals, "video_bytes", encoded_binary_video)
+      python_globals = Map.put(python_globals, "fps", encoded_fps)
+      python_globals = Map.put(python_globals, "force_packing", encoded_force_packing)
+      {result_string, updated_globals} = Pythonx.eval(python_code, python_globals)
+
+      description = Pythonx.decode(result_string)
+
+      analysis_response = %{
+        "description" => description,
+        "success" => true,
+        "raw_response" => description,
+        "analyzed_at" => DateTime.utc_now()
+      }
+
+      Logger.info("Video analysis completed successfully")
+      {:ok, analysis_response, Map.put(state, :python_globals, updated_globals)}
+
+    rescue
+      e ->
+        Logger.error("Video Analysis failed: #{inspect(e)}")
+        {:error, "Video Analysis error: #{inspect(e)}"}
+    end
+  end
 
   defp initialize_model do
     try do

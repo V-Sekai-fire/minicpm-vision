@@ -10,6 +10,7 @@ requires-python = "==3.11.*"
 dependencies = [
   "torch>=2.0.0",
   "torchvision",
+  "decord",
   "transformers>=4.36.0",
   "PILLOW>=10.0.0",
   "accelerate",
