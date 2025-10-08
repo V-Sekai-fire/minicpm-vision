@@ -111,14 +111,25 @@ defmodule MinicpmVision.Service do
   """
   @spec analyze_image(%ImageInput{} | [%ImageInput{}], String.t()) :: {:ok, map() | [map()]} | {:error, String.t()}
   def analyze_image(image_input, question) do
+    analyze_image(image_input, question, %{})
+  end
+
+  @spec analyze_image(%ImageInput{} | [%ImageInput{}], String.t(), map()) :: {:ok, map() | [map()]} | {:error, String.t()}
+  def analyze_image(image_input, question, opts) do
     case image_input do
       %ImageInput{} ->
         # Single image
         GenServer.call(@name, {:analyze_single_image, image_input.content, question}, 30_000)
       [%ImageInput{} | _] = images ->
-        # Multiple images - longer timeout needed for processing multiple images
-        image_binaries = Enum.map(images, & &1.content)
-        GenServer.call(@name, {:analyze_multiple_images, image_binaries, question}, 120_000)
+        batch_size = opts[:batch_size] || 10
+        if length(images) <= batch_size do
+          # Small batch - process all at once
+          image_binaries = Enum.map(images, & &1.content)
+          GenServer.call(@name, {:analyze_multiple_images, image_binaries, question}, 120_000)
+        else
+          # Large batch - process in chunks
+          GenServer.call(@name, {:analyze_batch_images, images, question, batch_size}, 300_000 * (length(images) / batch_size))
+        end
       _ ->
         {:error, "Input must be %ImageInput{} or [%ImageInput{}]"}
     end
@@ -180,6 +191,14 @@ defmodule MinicpmVision.Service do
     end
   end
 
+  @impl true
+  def handle_call({:analyze_batch_images, images, question, batch_size}, _from, state) do
+    case run_batch_analysis(images, question, batch_size, state) do
+      {:ok, results, updated_state} -> {:reply, {:ok, results}, updated_state}
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
+
   # Legacy support - redirect to new single image handler
   @impl true
   def handle_call({:analyze_image, binary_image, question}, _from, state) do
@@ -216,6 +235,82 @@ defmodule MinicpmVision.Service do
   end
 
   # Private functions
+
+  defp run_batch_analysis(images, question, batch_size, state) do
+    try do
+      total_images = length(images)
+      num_batches = ceil(total_images / batch_size)
+
+      Logger.info("Starting batch analysis: #{total_images} images in #{num_batches} batches of #{batch_size}")
+
+      start_time = DateTime.utc_now()
+
+      {results, final_state, errors} = Enum.reduce(1..num_batches, {[], state, []}, fn batch_num, {results_acc, state_acc, errors_acc} ->
+        batch_start = (batch_num - 1) * batch_size
+        batch_end = min(batch_num * batch_size, total_images)
+        batch_images = Enum.slice(images, batch_start, batch_end - batch_start)
+
+        Logger.info("Processing batch #{batch_num}/#{num_batches} (#{length(batch_images)} images)")
+
+        image_binaries = Enum.map(batch_images, & &1.content)
+        filenames = Enum.map(batch_images, & &1.filename)
+
+        case run_multiple_analysis(image_binaries, question, state_acc) do
+          {:ok, batch_result, updated_state} ->
+            # Enhance batch result with filenames and position info
+            enhanced_result = batch_result
+            |> Map.put("batch_number", batch_num)
+            |> Map.put("total_batches", num_batches)
+            |> Map.put("filenames", filenames)
+            |> Map.put("image_range", "#{batch_start + 1}-#{batch_end}")
+
+            {results_acc ++ [enhanced_result], updated_state, errors_acc}
+
+          {:error, reason} ->
+            # Log the error but continue with other batches
+            Logger.error("Batch #{batch_num} failed: #{reason}")
+            error_result = %{
+              "batch_number" => batch_num,
+              "total_batches" => num_batches,
+              "filenames" => filenames,
+              "image_range" => "#{batch_start + 1}-#{batch_end}",
+              "error" => reason,
+              "success" => false,
+              "analyzed_at" => DateTime.utc_now()
+            }
+            {results_acc ++ [error_result], state_acc, errors_acc ++ [batch_num]}
+        end
+      end)
+
+      end_time = DateTime.utc_now()
+
+      # Summary response
+      summary = %{
+        "batch_summary" => %{
+          "total_images" => total_images,
+          "num_batches" => num_batches,
+          "batch_size" => batch_size,
+          "successful_batches" => num_batches - length(errors),
+          "failed_batches" => length(errors),
+          "failed_batch_numbers" => errors,
+          "start_time" => start_time,
+          "end_time" => end_time,
+          "total_time_seconds" => DateTime.diff(end_time, start_time, :microsecond) / 1_000_000
+        },
+        "results" => results,
+        "success" => length(errors) == 0,
+        "analyzed_at" => end_time
+      }
+
+      Logger.info("Batch analysis completed: #{total_images} images, #{num_batches - length(errors)} successful batches, #{length(errors)} failed batches")
+      {:ok, summary, final_state}
+
+    rescue
+      e ->
+        Logger.error("Batch analysis failed: #{inspect(e)}")
+        {:error, "Batch analysis error: #{inspect(e)}"}
+    end
+  end
 
   defp run_multiple_analysis(image_binaries, question, state) do
     try do
