@@ -46,25 +46,6 @@ defmodule MinicpmVision.Service do
     end
   end
 
-  # Output Schemas - Define structured results from vision service
-  defmodule SimpleDescription do
-    use Ecto.Schema
-
-    @primary_key false
-    embedded_schema do
-      field(:what_i_see, :string)
-      field(:main_colors, {:array, :string}, default: [])
-      field(:overall_feeling, :string)
-    end
-
-    @llm_doc """
-    Simple description of an image containing:
-    - what_i_see: A brief description of what's visible
-    - main_colors: Primary colors observed
-    - overall_feeling: General impression or mood
-    """
-  end
-
   defmodule LanguageAnalysis do
     use Ecto.Schema
 
@@ -84,8 +65,6 @@ defmodule MinicpmVision.Service do
     - context_notes: Additional context or relevant notes
     """
   end
-
-
 
   # Client API
 
@@ -257,7 +236,6 @@ defmodule MinicpmVision.Service do
         "description" => description,
         "num_images" => length(image_binaries),
         "success" => true,
-        "raw_response" => description,
         "analyzed_at" => DateTime.utc_now()
       }
 
@@ -293,7 +271,6 @@ defmodule MinicpmVision.Service do
       analysis_response = %{
         "description" => description,
         "success" => true,
-        "raw_response" => description,
         "analyzed_at" => DateTime.utc_now()
       }
 
@@ -364,7 +341,6 @@ defmodule MinicpmVision.Service do
         "objects" => [],
         "colors" => [],
         "success" => true,
-        "raw_response" => description,
         "analyzed_at" => DateTime.utc_now()
       }
 

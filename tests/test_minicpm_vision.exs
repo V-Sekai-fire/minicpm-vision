@@ -26,16 +26,6 @@ defmodule MinicpmVision.ServiceTest do
     end
   end
 
-  describe "SimpleDescription schema" do
-    test "struct initializes with default values" do
-      output = %SimpleDescription{}
-
-      assert output.what_i_see == nil
-      assert output.main_colors == []
-      assert output.overall_feeling == nil
-    end
-  end
-
   describe "LanguageAnalysis schema" do
     test "struct initializes with default values" do
       output = %LanguageAnalysis{}
